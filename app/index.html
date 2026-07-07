@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SWITCH — Diagnostic Tool</title>
+
+<!-- ══ FONTS ══ -->
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- ══ STYLES ══ -->
+<link rel="stylesheet" href="styles.css">
+
+<!-- ══ EXTERNAL LIBRARIES (PDF + Word generation) ══ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+<!-- ══ EXTERNAL LIBRARIES (Telematics Dashboard: file parsing + charts) ══ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+
+<!-- ══ DTC DATA FILES ══
+     Each DTC has its own JS data file in ../data/
+     To add DTC 7:
+       1. Run:  python ../scripts/parse_excel.py  (with your new Excel file)
+       2. It creates:  ../data/dtc_7_cases.js
+       3. Add a <script> tag here:
+          <script src="../data/dtc_7_cases.js"></script>
+       4. Add the DTC entry in app.js under DTC_LIBRARY
+══ -->
+<script src="../data/dtc_4_cases.js"></script>
+
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════
+     VEHICLE SELECTOR OVERLAY
+     Shown on first load. User picks BUS or LCV.
+══════════════════════════════════════════════════ -->
+<div id="veh-overlay">
+  <div class="veh-modal">
+    <div class="vm-logo"><img src="../assets/logo.jpg" alt="SWITCH"></div>
+    <div class="vm-h">Select Vehicle Platform</div>
+    <div class="vm-sub">Choose your vehicle type to load the correct DTC database.</div>
+    <div class="veh-grid">
+      <div class="veh-btn" onclick="selectVehicle('BUS')">
+        <div class="vb-icon">🚌</div>
+        <div class="vb-name">BUS</div>
+        <div class="vb-sub">Switch Electric Bus</div>
+      </div>
+      <div class="veh-btn" onclick="selectVehicle('LCV')">
+        <div class="vb-icon">🚚</div>
+        <div class="vb-name">LCV</div>
+        <div class="vb-sub">Light Commercial Vehicle</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════
+     NAVIGATION BAR
+══════════════════════════════════════════════════ -->
+<nav>
+  <div class="nav-logo">
+    <img src="../assets/logo.jpg" alt="SWITCH">
+    <span class="nav-tagline">Diagnostic Tool</span>
+  </div>
+  <div class="nav-sep"></div>
+  <div class="nav-tabs">
+    <button class="ntab active" onclick="showPage('diag', this)">⚡ Diagnostic</button>
+    <button class="ntab"        onclick="showPage('telem', this)">🔋 Telematics</button>
+    <button class="ntab"        onclick="showPage('nl',   this)">📬 Newsletter</button>
+  </div>
+  <div class="nav-right">
+    <div class="sys-pill">ONLINE</div>
+    <span id="clock"></span>
+  </div>
+</nav>
+
+
+<!-- ══════════════════════════════════════════════════
+     DIAGNOSTIC PAGE
+══════════════════════════════════════════════════ -->
+<div id="pg-diag" class="page active">
+
+  <!-- Sidebar: DTC reference list -->
+  <div class="sidebar">
+    <div class="sb-head">
+      DTC Reference
+      <div class="sb-vb" id="vBadge" onclick="switchVehicle()">— ▾</div>
+    </div>
+    <div class="sb-body" id="dtcList"></div>
+    <div class="sb-foot">
+      <div class="sbr"><span>Status</span>  <span>ONLINE</span></div>
+      <div class="sbr"><span>DTCs</span>    <span id="dtcCnt">—</span></div>
+      <div class="sbr"><span>Vehicle</span> <span id="vLbl">—</span></div>
+      <div class="sbr"><span>Session</span> <span id="sessDisp">—</span></div>
+    </div>
+  </div>
+
+  <!-- Main diagnostic area -->
+  <div class="diag-main">
+
+    <!-- Status bar -->
+    <div class="dtopbar">
+      <div class="d-sess">
+        <div class="d-live">LIVE</div>
+        <div class="d-lbl" id="dOp">Select vehicle to begin...</div>
+      </div>
+      <div id="d-prog"></div>
+    </div>
+
+    <!-- Case progress numbers (built dynamically by JS) -->
+    <div class="case-bar" id="caseBar"></div>
+
+    <!-- Main scrollable content — form / steps / summary all render here -->
+    <div id="diagContent"></div>
+
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════
+     TELEMATICS DASHBOARD PAGE
+══════════════════════════════════════════════════ -->
+<div id="pg-telem" class="page">
+  <div class="tm-wrap">
+
+    <!-- Upload zone (shown until a file is loaded) -->
+    <div class="tm-upload" id="tmUpload">
+      <div class="tm-upload-icon">🔋</div>
+      <div class="tm-upload-title">Upload Telematics Data</div>
+      <div class="tm-upload-sub">CSV or XLSX export from the vehicle telematics system</div>
+      <label class="btn-start tm-upload-btn">
+        Choose File
+        <input type="file" id="tmFileInput" accept=".csv,.xlsx,.xls" style="display:none">
+      </label>
+      <div class="tm-upload-hint">or drag &amp; drop a file here</div>
+      <div class="tm-upload-err" id="tmUploadErr"></div>
+    </div>
+
+    <!-- Dashboard (shown after a file is loaded) -->
+    <div id="tmDashboard" class="tm-dashboard" style="display:none">
+
+      <div class="tm-topbar">
+        <div class="tm-file-info">
+          <span class="tm-file-name" id="tmFileName"></span>
+          <span class="tm-row-count" id="tmRowCount"></span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center">
+          <input type="email" class="finput" id="tmManagerEmail" placeholder="manager@switch.com" style="width:200px">
+          <div class="xwrap">
+            <button class="btn-exp" onclick="tmToggleExport()">⬇ Export Report</button>
+            <div class="xmenu" id="tmXmenu">
+              <div class="xitem" onclick="tmDoExport('pdf')">📄 PDF Report (download)</div>
+              <div class="xitem" onclick="tmDoExport('word')">📝 Word Report (download)</div>
+              <div class="xitem" onclick="tmEmailReport()">📧 Email PDF to Manager</div>
+            </div>
+          </div>
+          <button class="btn-rst" id="tmReset">↻ New File</button>
+        </div>
+      </div>
+
+      <div class="tm-filters" id="tmFilters"></div>
+
+      <div class="tm-section">
+        <div class="sec-heading">1. Error Codes vs. Sequence State</div>
+        <div class="tm-caption" id="tmErrCaption"></div>
+        <div class="tm-table-wrap" id="tmErrTableWrap"></div>
+      </div>
+
+      <div class="tm-section">
+        <div class="sec-heading">2. Parameter Trends</div>
+        <div class="tm-param-controls" id="tmParamControls"></div>
+        <div id="tmChartArea"></div>
+      </div>
+
+      <div class="tm-section">
+        <div class="sec-heading">3. Voltage Delta (Max − Min Cell Voltage)</div>
+        <div id="tmVoltageTables"></div>
+      </div>
+
+      <div class="tm-section">
+        <div class="sec-heading">4. Temperature Delta (Max − Min Battery Temp)</div>
+        <div id="tmTempTables"></div>
+      </div>
+
+      <div class="tm-section">
+        <div class="tm-raw-actions">
+          <button class="btn-exp" id="tmToggleRaw">Show raw data preview</button>
+          <button class="btn-exp" id="tmDownloadCsv">⬇ Download filtered CSV</button>
+        </div>
+        <div id="tmRawWrap" style="display:none"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════
+     NEWSLETTER PAGE
+══════════════════════════════════════════════════ -->
+<div id="pg-nl" class="page">
+
+  <!-- Full article reader (hidden until user clicks an issue) -->
+  <div class="nl-reader" id="nlReader">
+    <div class="rd-nav">
+      <button class="btn-back" onclick="closeReader()">← Back</button>
+      <div style="font-family:var(--mono);font-size:.66rem;color:var(--text3)" id="rdMeta"></div>
+    </div>
+    <div class="rd-wrap" id="rdContent"></div>
+  </div>
+
+  <!-- Newsletter main layout -->
+  <div class="nl-wrap">
+
+    <!-- Hero -->
+    <div style="margin-bottom:44px">
+      <div class="nl-eyebrow">Current Engineering Intelligence</div>
+      <h1 class="nl-h1">Curremt Engineering<br>insights</em></h1>
+      <p class="nl-desc">Weekly technical bulletins — DTC procedures, wiring diagnostics, App updates, and field lessons.</p>
+      <div class="nl-form">
+        <input type="email" id="nlE1" placeholder="engineer@switch.com">
+        <button class="btn-sub" onclick="nlSub('nlE1')">Subscribe</button>
+      </div>
+      <p class="nl-note">// No spam. Every Tuesday. Unsubscribe anytime.</p>
+    </div>
+
+    <!-- Featured article (always NL_DATA[0]) — click opens reader -->
+    <div class="nl-feat" onclick="openReader(0)">
+      <div>
+        <div class="nf-ey">// Featured · APP #1 · Apri;, 2026</div>
+        <div class="nf-t">APP 1: Telematics Data merger app guide</div>
+        <div class="nf-d">A step-by-step walkthrough.</div>
+        <div class="nf-tags">
+          <span class="nf-tag">Data Merger for Telematics</span>
+          <span class="nf-tag">Field Guide</span>
+          <span class="nf-tag">App Developer: Aravind</span>
+        </div>
+      </div>
+      <div class="nf-cta"><div class="nfc-l">READ</div><div class="nfc-n">#1</div></div>
+    </div>
+
+    <!-- Issues grid (NL_DATA[1..] — built by buildNL() in app.js) -->
+    <div class="nl-gt">Recent Issues</div>
+    <div class="nl-grid" id="nlGrid"></div>
+
+    <!-- Bottom subscribe CTA -->
+    <div class="nl-cta">
+      <h2>Never miss a fault bulletin</h2>
+      <p>Join Switch Current engineers resolving failures faster every week.</p>
+      <div class="nl-form" style="justify-content:center">
+        <input type="email" id="nlE2" placeholder="engineer@switch.com">
+        <button class="btn-sub" onclick="nlSub('nlE2')">Subscribe Free</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- Toast notification -->
+<div class="toast" id="toast">✓ Subscribed — welcome aboard!</div>
+
+
+<!-- ══ APP LOGIC ══ -->
+<script src="../data/dtc_69_cases.js"></script>
+<script src="../data/dtc_13_cases.js"></script>
+<script src="../data/dtc_25_cases.js"></script>
+<script src="../data/dtc_55_cases.js"></script>
+<script src="../data/dtc_62_cases.js"></script>
+<script src="../data/dtc_74_cases.js"></script>
+<script src="../data/dtc_88_cases.js"></script>
+<script src="../data/dtc_98_cases.js"></script>
+<script src="../data/dtc_100_cases.js"></script>
+<script src="../data/dtc_101_cases.js"></script>
+<script src="../data/dtc_102_cases.js"></script>
+<script src="../data/dtc_103_cases.js"></script>
+<script src="../data/dtc_104_cases.js"></script>
+<script src="../data/dtc_108_cases.js"></script>
+<script src="../data/dtc_109_cases.js"></script>
+<script src="../data/dtc_140_cases.js"></script>
+<script src="../data/dtc_145_cases.js"></script>
+<script src="../data/dtc_146_cases.js"></script>
+<script src="../data/dtc_152_cases.js"></script>
+<script src="../data/dtc_155_cases.js"></script>
+<script src="app.js"></script>
+<script src="telematics.js"></script>
+
+</body>
+</html>
